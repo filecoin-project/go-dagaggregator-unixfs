@@ -1,6 +1,7 @@
 package dagaggregator
 
 import (
+	"context"
 	"testing"
 
 	"github.com/ipfs/go-blockservice"
@@ -18,7 +19,7 @@ var ramDs = merkledag.NewDAGService(blockservice.New(ramBs, exchangeoffline.Exch
 
 func TestAggregate(t *testing.T) {
 
-	aggRoot, err := Aggregate(ramDs, []AggregateDagEntry{
+	aggRoot, err := Aggregate(context.Background(), ramDs, []AggregateDagEntry{
 		{
 			RootCid:                   cidFromStr("QmQy6xmJhrcC5QLboAcGFcAE1tC8CrwDVkrHdEYJkLscrQ"),
 			UniqueBlockCount:          1,

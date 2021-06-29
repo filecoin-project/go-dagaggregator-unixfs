@@ -75,7 +75,10 @@ type nodeMap map[string]*merkledag.ProtoNode
 // to the supplied DAGService. No "temporary blocks" are produced in the process:
 // everything written to the DAGService is part of the final DAG capped by the
 // final `aggregateRoot`.
-func Aggregate(ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, err error) {
+//
+// Note: CIDs based on the IDENTITY multihash 0x00 are silently excluded from
+// aggregation, and are not reflected in the manifest.
+func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, err error) {
 
 	dags := make(map[string]*ManifestDagEntry, len(toAggregate))
 
@@ -158,7 +161,7 @@ func Aggregate(ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggre
 		d.PathIndexes[2] = len(innerNodes[parentName].Links()) - 1
 	}
 
-	newBlocks := make([]ipldformat.Node, 0, 1<<20)
+	newBlocks := make([]ipldformat.Node, 0, len(innerNodes)*3/2)
 
 	// secondary layer, 2 bytes off end ( drop the 2 second-to-last )
 	outerNodes := make(nodeMap)
@@ -184,7 +187,7 @@ func Aggregate(ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggre
 
 	// root
 	root := emptyDir()
-	for _, nodeName := range sortedNodeNames(outerNodes) {
+	for topIdx, nodeName := range sortedNodeNames(outerNodes) {
 
 		nd := outerNodes[nodeName]
 		newBlocks = append(newBlocks, nd)
@@ -196,7 +199,7 @@ func Aggregate(ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggre
 			for _, innerDaglink := range innerNodes[outerDagLink.Name].Links() {
 				d := dags[innerDaglink.Name]
 				d.PathPrefixes[0] = nodeName
-				d.PathIndexes[0] = len(root.Links()) // no ...-1, idx#0 is left for the manifest
+				d.PathIndexes[0] = topIdx + 1 // +1 because idx#0 is left for the manifest
 			}
 		}
 	}
@@ -270,7 +273,7 @@ func Aggregate(ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggre
 
 	// we are done now, add everything
 	newBlocks = append(newBlocks, root)
-	err = ds.AddMany(context.Background(), newBlocks)
+	err = ds.AddMany(ctx, newBlocks)
 	if err != nil {
 		return cid.Undef, err
 	}
