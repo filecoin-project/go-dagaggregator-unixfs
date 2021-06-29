@@ -83,7 +83,7 @@ metadata.
 
 ### Individual DAG Entries
 
-The rest of the manifest records contain information about the incuded DAGs, one
+The rest of the manifest records contain information about the included DAGs, one
 per record.
 
 ```
@@ -98,7 +98,7 @@ per record.
 }
 ```
 
-`PathPrefixes` contains the parent directories for this particular DAG, absed on the chosen parts of the target CID. They currently can be derived from `DagCIDV1`, but are included for ease of navigation.
+`PathPrefixes` contains the parent directories for this particular DAG, based on the chosen parts of the target CID. They currently can be derived from `DagCIDV1`, but are included for ease of navigation.
 
 `PathIndexes` contains the 0-based position of each entry within its
 corresponding parent directory. It is provided to make partial retrievals possible
