@@ -1,7 +1,7 @@
 go-dagaggregator-unixfs
 =======================
 
-> A steteless aggregator for organizing arbitrary IPLD dags within a UnixFS hierarchy
+> A stateless aggregator for organizing arbitrary IPLD dags within a UnixFS hierarchy
 
 [![GoDoc](https://godoc.org/github.com/filecoin-project/go-dagaggregator-unixfs?status.svg)](https://pkg.go.dev/github.com/filecoin-project/go-dagaggregator-unixfs)
 [![GoReport](https://goreportcard.com/badge/github.com/filecoin-project/go-dagaggregator-unixfs)](https://goreportcard.com/report/github.com/filecoin-project/go-dagaggregator-unixfs)
