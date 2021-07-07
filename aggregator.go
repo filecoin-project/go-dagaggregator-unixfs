@@ -207,10 +207,14 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 	// now that we have all the paths correctly, assemble the manifest and add it to the root
 	prdr, pwrr := io.Pipe()
 
-	errCh := make(chan error, 2)
+	errCh := make(chan error, 2) // easier to just push all errors as they happen
 	go func() {
-		errCh <- EncodeManifestJSON(aggregateManifestEntries, pwrr)
-		errCh <- pwrr.Close()
+		if err := EncodeManifestJSON(aggregateManifestEntries, pwrr); err != nil {
+			errCh <- err
+		}
+		if err := pwrr.Close(); err != nil {
+			errCh <- err
+		}
 	}()
 
 	leaves, err := (&importhelper.DagBuilderParams{
@@ -233,10 +237,9 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		return cid.Undef, nil, err
 	}
 
-	for len(errCh) > 0 {
-		if err := <-errCh; err != nil {
-			return cid.Undef, nil, err
-		}
+	// return only 1st error, even if there are more
+	if len(errCh) > 0 {
+		return cid.Undef, nil, <-errCh
 	}
 
 	if err = root.AddNodeLink(AggregateManifestFilename, manifest); err != nil {
