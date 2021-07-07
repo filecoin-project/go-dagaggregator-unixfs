@@ -78,7 +78,7 @@ type nodeMap map[string]*merkledag.ProtoNode
 //
 // Note: CIDs based on the IDENTITY multihash 0x00 are silently excluded from
 // aggregation, and are not reflected in the manifest.
-func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, aggregateManifest []*ManifestDagEntry, err error) {
+func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, aggregateManifestEntries []*ManifestDagEntry, err error) {
 
 	dags := make(map[string]*ManifestDagEntry, len(toAggregate))
 
@@ -130,17 +130,17 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 	}
 
 	// unixfs sorts internally, so we need to pre-sort to match up insertion indices
-	aggregateManifest = make([]*ManifestDagEntry, 0, len(dags))
+	aggregateManifestEntries = make([]*ManifestDagEntry, 0, len(dags))
 	for _, d := range dags {
-		aggregateManifest = append(aggregateManifest, d)
+		aggregateManifestEntries = append(aggregateManifestEntries, d)
 	}
-	sort.Slice(aggregateManifest, func(i, j int) bool {
-		return strings.Compare(aggregateManifest[i].DagCidV1, aggregateManifest[j].DagCidV1) < 0
+	sort.Slice(aggregateManifestEntries, func(i, j int) bool {
+		return strings.Compare(aggregateManifestEntries[i].DagCidV1, aggregateManifestEntries[j].DagCidV1) < 0
 	})
 
 	// innermost layer, 4 bytes off end
 	innerNodes := make(nodeMap)
-	for _, d := range aggregateManifest {
+	for _, d := range aggregateManifestEntries {
 
 		parentName := d.DagCidV1[:3] + `...` + d.DagCidV1[len(d.DagCidV1)-4:]
 		if _, exists := innerNodes[parentName]; !exists {
@@ -207,42 +207,10 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 	// now that we have all the paths correctly, assemble the manifest and add it to the root
 	prdr, pwrr := io.Pipe()
 
-	errCh := make(chan error, 1)
+	errCh := make(chan error, 2)
 	go func() {
-
-		defer func() {
-			err := pwrr.Close()
-			if err != nil {
-				errCh <- err
-			}
-		}()
-
-		j := json.NewEncoder(pwrr)
-
-		err := j.Encode(CurrentManifestPreamble)
-		if err != nil {
-			errCh <- err
-			return
-		}
-
-		err = j.Encode(ManifestSummary{
-			RecordType:      DagAggregateSummary,
-			EntriesSortedBy: "DagCidV1",
-			Description:     "Aggregate of non-related DAGs, produced by github.com/filecoin-project/go-dagaggregator-unixfs",
-			EntryCount:      len(aggregateManifest),
-		})
-		if err != nil {
-			errCh <- err
-			return
-		}
-
-		for _, d := range aggregateManifest {
-			err = j.Encode(d)
-			if err != nil {
-				errCh <- err
-				return
-			}
-		}
+		errCh <- EncodeManifestJSON(aggregateManifestEntries, pwrr)
+		errCh <- pwrr.Close()
 	}()
 
 	leaves, err := (&importhelper.DagBuilderParams{
@@ -259,12 +227,16 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		return cid.Undef, nil, err
 	}
 
+	// the writer will exit and close the pipe when done, signaling UnixFS we are done
 	manifest, err := balanced.Layout(leaves)
 	if err != nil {
 		return cid.Undef, nil, err
 	}
-	if len(errCh) > 0 {
-		return cid.Undef, nil, <-errCh
+
+	for len(errCh) > 0 {
+		if err := <-errCh; err != nil {
+			return cid.Undef, nil, err
+		}
 	}
 
 	if err = root.AddNodeLink(AggregateManifestFilename, manifest); err != nil {
@@ -278,7 +250,37 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		return cid.Undef, nil, err
 	}
 
-	return root.Cid(), aggregateManifest, nil
+	return root.Cid(), aggregateManifestEntries, nil
+}
+
+// EncodeManifestJSON turns a set of manifest entries into the final NDJSON file
+// included at the root of the aggregate structure.
+func EncodeManifestJSON(aggregateManifestEntries []*ManifestDagEntry, jsonFile io.Writer) error {
+	j := json.NewEncoder(jsonFile)
+
+	err := j.Encode(CurrentManifestPreamble)
+	if err != nil {
+		return err
+	}
+
+	err = j.Encode(ManifestSummary{
+		RecordType:      DagAggregateSummary,
+		EntriesSortedBy: "DagCidV1",
+		Description:     "Aggregate of non-related DAGs, produced by github.com/filecoin-project/go-dagaggregator-unixfs",
+		EntryCount:      len(aggregateManifestEntries),
+	})
+	if err != nil {
+		return err
+	}
+
+	for _, d := range aggregateManifestEntries {
+		err = j.Encode(d)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 func sortedNodeNames(nodeMap nodeMap) []string {
