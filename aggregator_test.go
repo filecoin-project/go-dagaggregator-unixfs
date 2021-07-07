@@ -19,7 +19,7 @@ var ramDs = merkledag.NewDAGService(blockservice.New(ramBs, exchangeoffline.Exch
 
 func TestAggregate(t *testing.T) {
 
-	aggRoot, err := Aggregate(context.Background(), ramDs, []AggregateDagEntry{
+	aggRoot, aggManifest, err := Aggregate(context.Background(), ramDs, []AggregateDagEntry{
 		{
 			RootCid:                   cidFromStr("QmQy6xmJhrcC5QLboAcGFcAE1tC8CrwDVkrHdEYJkLscrQ"),
 			UniqueBlockCount:          1,
@@ -47,6 +47,19 @@ func TestAggregate(t *testing.T) {
 	exp := cidFromStr("bafybeib62b4ukyzjcj7d2h4mbzjgg7l6qiz3ma4vb4b2bawmcauf5afvua")
 	if !aggRoot.Equals(exp) {
 		t.Errorf("Unexpected mismatch of aggregate root: expected %s, got %s", exp, aggRoot)
+	}
+
+	expectedIndices := [][3]int{
+		{1, 0, 0},
+		{1, 0, 1},
+		{1, 0, 2},
+		{2, 0, 0},
+	}
+
+	for i, me := range aggManifest {
+		if me.PathIndexes != expectedIndices[i] {
+			t.Errorf("Unexpected mismatch of aggregate path for entry %d:\nexpected %v\ngot %v\n", i, expectedIndices[i], me.PathIndexes)
+		}
 	}
 }
 
