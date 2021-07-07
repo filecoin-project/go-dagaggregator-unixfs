@@ -78,7 +78,7 @@ type nodeMap map[string]*merkledag.ProtoNode
 //
 // Note: CIDs based on the IDENTITY multihash 0x00 are silently excluded from
 // aggregation, and are not reflected in the manifest.
-func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, err error) {
+func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, aggregateManifest []*ManifestDagEntry, err error) {
 
 	dags := make(map[string]*ManifestDagEntry, len(toAggregate))
 
@@ -126,21 +126,21 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 	}
 
 	if len(dags) == 0 {
-		return cid.Undef, xerrors.New("no valid entries to aggregate")
+		return cid.Undef, nil, xerrors.New("no valid entries to aggregate")
 	}
 
 	// unixfs sorts internally, so we need to pre-sort to match up insertion indices
-	sortedDags := make([]*ManifestDagEntry, 0, len(dags))
+	aggregateManifest = make([]*ManifestDagEntry, 0, len(dags))
 	for _, d := range dags {
-		sortedDags = append(sortedDags, d)
+		aggregateManifest = append(aggregateManifest, d)
 	}
-	sort.Slice(sortedDags, func(i, j int) bool {
-		return strings.Compare(sortedDags[i].DagCidV1, sortedDags[j].DagCidV1) < 0
+	sort.Slice(aggregateManifest, func(i, j int) bool {
+		return strings.Compare(aggregateManifest[i].DagCidV1, aggregateManifest[j].DagCidV1) < 0
 	})
 
 	// innermost layer, 4 bytes off end
 	innerNodes := make(nodeMap)
-	for _, d := range sortedDags {
+	for _, d := range aggregateManifest {
 
 		parentName := d.DagCidV1[:3] + `...` + d.DagCidV1[len(d.DagCidV1)-4:]
 		if _, exists := innerNodes[parentName]; !exists {
@@ -156,7 +156,7 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 			Size: dagSize,
 			Cid:  d.rootCid,
 		}); err != nil {
-			return cid.Undef, err
+			return cid.Undef, nil, err
 		}
 		d.PathIndexes[2] = len(innerNodes[parentName].Links()) - 1
 	}
@@ -175,7 +175,7 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		}
 
 		if err := outerNodes[parentName].AddNodeLink(nodeName, nd); err != nil {
-			return cid.Undef, err
+			return cid.Undef, nil, err
 		}
 
 		for _, innerDaglink := range nd.Links() {
@@ -192,7 +192,7 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		nd := outerNodes[nodeName]
 		newBlocks = append(newBlocks, nd)
 		if err := root.AddNodeLink(nodeName, nd); err != nil {
-			return cid.Undef, err
+			return cid.Undef, nil, err
 		}
 
 		for _, outerDagLink := range nd.Links() {
@@ -229,14 +229,14 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 			RecordType:      DagAggregateSummary,
 			EntriesSortedBy: "DagCidV1",
 			Description:     "Aggregate of non-related DAGs, produced by github.com/filecoin-project/go-dagaggregator-unixfs",
-			EntryCount:      len(sortedDags),
+			EntryCount:      len(aggregateManifest),
 		})
 		if err != nil {
 			errCh <- err
 			return
 		}
 
-		for _, d := range sortedDags {
+		for _, d := range aggregateManifest {
 			err = j.Encode(d)
 			if err != nil {
 				errCh <- err
@@ -256,29 +256,29 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 		},
 	}).New(chunker.NewSizeSplitter(prdr, 256<<10))
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, err
 	}
 
 	manifest, err := balanced.Layout(leaves)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, err
 	}
 	if len(errCh) > 0 {
-		return cid.Undef, <-errCh
+		return cid.Undef, nil, <-errCh
 	}
 
 	if err = root.AddNodeLink(AggregateManifestFilename, manifest); err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, err
 	}
 
 	// we are done now, add everything
 	newBlocks = append(newBlocks, root)
 	err = ds.AddMany(ctx, newBlocks)
 	if err != nil {
-		return cid.Undef, err
+		return cid.Undef, nil, err
 	}
 
-	return root.Cid(), nil
+	return root.Cid(), aggregateManifest, nil
 }
 
 func sortedNodeNames(nodeMap nodeMap) []string {
