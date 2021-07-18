@@ -4,17 +4,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/filecoin-project/go-dagaggregator-unixfs/lib/rambs"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
-	"github.com/ipfs/go-datastore"
-	datastoresync "github.com/ipfs/go-datastore/sync"
-	blockstore "github.com/ipfs/go-ipfs-blockstore"
 	exchangeoffline "github.com/ipfs/go-ipfs-exchange-offline"
 	"github.com/ipfs/go-merkledag"
 )
 
-// NOTE: AllKeysChan is broken in ipfs.Blockstore v1.x: it will not return the CIDs originally put in
-var ramBs = blockstore.NewBlockstore(datastoresync.MutexWrap(datastore.NewMapDatastore()))
+var ramBs = new(rambs.RamBs) // we want codec-awareness
 var ramDs = merkledag.NewDAGService(blockservice.New(ramBs, exchangeoffline.Exchange(ramBs)))
 
 func TestAggregate(t *testing.T) {
