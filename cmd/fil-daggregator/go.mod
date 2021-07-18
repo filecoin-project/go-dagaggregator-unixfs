@@ -12,6 +12,7 @@ require (
 	github.com/ipfs/go-ipfs-files v0.0.8
 	github.com/ipfs/go-log/v2 v2.3.0
 	github.com/ipfs/go-merkledag v0.3.2
+	github.com/mattn/go-isatty v0.0.13
 	github.com/multiformats/go-multihash v0.0.15
 	github.com/pborman/getopt/v2 v2.1.0
 	github.com/pborman/options v1.2.0

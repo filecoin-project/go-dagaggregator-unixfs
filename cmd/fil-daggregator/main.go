@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/signal"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/filecoin-project/go-dagaggregator-unixfs"
@@ -18,6 +20,7 @@ import (
 	ipfsfiles "github.com/ipfs/go-ipfs-files"
 	logging "github.com/ipfs/go-log/v2"
 	"github.com/ipfs/go-merkledag"
+	"github.com/mattn/go-isatty"
 	"github.com/multiformats/go-multihash"
 	"github.com/pborman/getopt/v2"
 	"github.com/pborman/options"
@@ -37,6 +40,7 @@ type opts struct {
 	IpfsAPI            string `getopt:"--ipfs-api             A read/write IPFS API URL"`
 	IpfsAPIMaxWorkers  uint   `getopt:"--ipfs-api-max-workers Max amount of parallel API requests"`
 	IpfsAPITimeoutSecs uint   `getopt:"--ipfs-api-timeout     Max amount of seconds for a single API operation"`
+	ShowProgress       bool   `getopt:"--show-progress        Print progress on STDERR, default when a TTY"`
 	AggregateVersion   uint   `getopt:"--aggregate-version    The version of aggregate to produce"`
 	SkipDagStat        bool   `getopt:"--skip-dag-stat        Do not query he API for the input dag stats"`
 	Help               bool   `getopt:"-h --help              Display help"`
@@ -45,6 +49,7 @@ type opts struct {
 func main() {
 
 	opts := &opts{
+		ShowProgress:       isatty.IsTerminal(os.Stderr.Fd()),
 		IpfsAPIMaxWorkers:  8,
 		IpfsAPITimeoutSecs: 300,
 		AggregateVersion:   1,
@@ -126,13 +131,25 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 	ctx, shutdownWorkers := context.WithCancel(externalCtx)
 	defer shutdownWorkers()
 
+	var lastPct uint64
+	dagsDone := new(uint64)
+	dagsTotal := uint64(len(toAgg))
+
 	maxWorkers := opts.IpfsAPIMaxWorkers
 	workCh := make(chan int)                // channel of toAgg indexes to work on
 	errCh := make(chan error, 1+maxWorkers) // our own error plus one from each worker
 
-	// work dispenser, watchdog to bail early if an error appears
+	// work dispenser, watchdog for progress and to bail early if an error appears
 	go func() {
 		defer close(workCh)
+
+		var progressTick <-chan time.Time
+		if opts.ShowProgress {
+			fmt.Fprint(os.Stderr, "0% of dags analyzed\r")
+			t := time.NewTicker(250 * time.Millisecond)
+			progressTick = t.C
+			defer t.Stop()
+		}
 
 		toAggIdx := 0
 		for toAggIdx < len(toAgg) {
@@ -148,6 +165,12 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 					shutdownWorkers()
 				}
 				return
+			case <-progressTick:
+				curPct := 100 * atomic.LoadUint64(dagsDone) / dagsTotal
+				if curPct != lastPct {
+					lastPct = curPct
+					fmt.Fprintf(os.Stderr, "%d%% of dags analyzed\r", lastPct)
+				}
 			}
 		}
 	}()
@@ -177,6 +200,11 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 
 				toAgg[toAggIdx].UniqueBlockCount = ds.NumBlocks
 				toAgg[toAggIdx].UniqueBlockCumulativeSize = ds.Size
+
+				if opts.ShowProgress {
+					atomic.AddUint64(dagsDone, 1)
+				}
+
 			}
 		}()
 	}
@@ -199,11 +227,24 @@ func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Block
 		return err
 	}
 
+	var lastPct uint64
+	blocksDone := new(uint64)
+
+	// this works because of how AllKeysChan behaves on rambs
+	blocksTotal := uint64(len(akc))
+
 	maxWorkers := opts.IpfsAPIMaxWorkers
 	errCh := make(chan error, 1+maxWorkers) // our own error plus one from each worker
 
-	// watchdog to bail early if an error appears
+	// watchdog for progress and to bail early if an error appears
 	go func() {
+		var progressTick <-chan time.Time
+		if opts.ShowProgress {
+			fmt.Fprint(os.Stderr, "0% of blocks written\r")
+			t := time.NewTicker(250 * time.Millisecond)
+			progressTick = t.C
+			defer t.Stop()
+		}
 		for {
 			select {
 			case <-ctx.Done():
@@ -215,6 +256,12 @@ func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Block
 					shutdownWorkers()
 				}
 				return
+			case <-progressTick:
+				curPct := 100 * atomic.LoadUint64(blocksDone) / blocksTotal
+				if curPct != lastPct {
+					lastPct = curPct
+					fmt.Fprintf(os.Stderr, "%d%% of blocks written\r", lastPct)
+				}
 			}
 		}
 	}()
@@ -275,6 +322,10 @@ func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Block
 					if res.Key != c.String() {
 						errCh <- xerrors.Errorf("unexpected cid mismatch after /block/put: expected %s but got %s", c, res.Key)
 						return
+					}
+
+					if opts.ShowProgress {
+						atomic.AddUint64(blocksDone, 1)
 					}
 				}
 			}
