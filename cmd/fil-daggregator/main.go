@@ -103,7 +103,7 @@ func main() {
 
 	if !opts.SkipDagStat {
 		if err := statSources(ctx, opts, toAgg); err != nil {
-			log.Fatal(err)
+			log.Fatalf("analysis of source DAGs failed: %s", err)
 		}
 	}
 
@@ -128,52 +128,21 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 		NumBlocks uint64
 	}
 
-	ctx, shutdownWorkers := context.WithCancel(externalCtx)
+	innerCtx, shutdownWorkers := context.WithCancel(externalCtx)
 	defer shutdownWorkers()
 
-	var lastPct uint64
 	dagsDone := new(uint64)
-	dagsTotal := uint64(len(toAgg))
 
+	// channel of toAgg indexes to work on
+	workCh := make(chan int, len(toAgg))
+	for i := range toAgg {
+		workCh <- i
+	}
+	close(workCh)
+
+	finishCh := make(chan struct{}, 1)
 	maxWorkers := opts.IpfsAPIMaxWorkers
-	workCh := make(chan int)                // channel of toAgg indexes to work on
-	errCh := make(chan error, 1+maxWorkers) // our own error plus one from each worker
-
-	// work dispenser, watchdog for progress and to bail early if an error appears
-	go func() {
-		defer close(workCh)
-
-		var progressTick <-chan time.Time
-		if opts.ShowProgress {
-			fmt.Fprint(os.Stderr, "0% of dags analyzed\r")
-			t := time.NewTicker(250 * time.Millisecond)
-			progressTick = t.C
-			defer t.Stop()
-		}
-
-		toAggIdx := 0
-		for toAggIdx < len(toAgg) {
-			select {
-			case workCh <- toAggIdx:
-				toAggIdx++
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			case err := <-errCh:
-				errCh <- err // put error back where we got it from
-				if err != nil {
-					shutdownWorkers()
-				}
-				return
-			case <-progressTick:
-				curPct := 100 * atomic.LoadUint64(dagsDone) / dagsTotal
-				if curPct != lastPct {
-					lastPct = curPct
-					fmt.Fprintf(os.Stderr, "%d%% of dags analyzed\r", lastPct)
-				}
-			}
-		}
-	}()
+	errCh := make(chan error, maxWorkers)
 
 	var wg sync.WaitGroup
 
@@ -188,11 +157,16 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 			for {
 				toAggIdx, chanOpen := <-workCh
 				if !chanOpen {
+					select {
+					case finishCh <- struct{}{}:
+					default:
+						// if we can't signal feeder is done - someone else already did
+					}
 					return
 				}
 
 				ds := new(dagStat)
-				err := api.Request("dag/stat").Arguments(toAgg[toAggIdx].RootCid.String()).Option("progress", "false").Exec(ctx, ds)
+				err := api.Request("dag/stat").Arguments(toAgg[toAggIdx].RootCid.String()).Option("progress", "false").Exec(innerCtx, ds)
 				if err != nil {
 					errCh <- err
 					return
@@ -204,87 +178,95 @@ func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.
 				if opts.ShowProgress {
 					atomic.AddUint64(dagsDone, 1)
 				}
-
 			}
 		}()
 	}
 
-	wg.Wait()
-	shutdownWorkers()
+	var lastPct uint64
+	dagsTotal := uint64(len(toAgg))
+	var progressTick <-chan time.Time
+	if opts.ShowProgress {
+		fmt.Fprint(os.Stderr, "0% of dags analyzed\r")
+		t := time.NewTicker(250 * time.Millisecond)
+		progressTick = t.C
+		defer t.Stop()
+	}
 
-	errCh <- externalCtx.Err()
+	var workerError error
+watchdog:
+	for {
+		select {
+
+		case <-finishCh:
+			break watchdog
+
+		case <-externalCtx.Done():
+			break watchdog
+
+		case workerError = <-errCh:
+			shutdownWorkers()
+			break watchdog
+
+		case <-progressTick:
+			curPct := 100 * atomic.LoadUint64(dagsDone) / dagsTotal
+			if curPct != lastPct {
+				lastPct = curPct
+				fmt.Fprintf(os.Stderr, "%d%% of dags analyzed\r", lastPct)
+			}
+		}
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	if workerError != nil {
+		return workerError
+	}
 	return <-errCh
 }
 
 // pulls cids from an AllKeysChan and sends them concurrently via multiple workers to an API
 func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Blockstore) error {
 
-	ctx, shutdownWorkers := context.WithCancel(externalCtx)
+	innerCtx, shutdownWorkers := context.WithCancel(externalCtx)
 	defer shutdownWorkers()
 
-	akc, err := bs.AllKeysChan(ctx)
+	akc, err := bs.AllKeysChan(innerCtx)
 	if err != nil {
 		return err
 	}
 
-	var lastPct uint64
+	maxWorkers := opts.IpfsAPIMaxWorkers
+	finishCh := make(chan struct{}, 1)
+	errCh := make(chan error, maxWorkers)
+
+	// WaitGroup as we want everyone to fully "quit" before we return
+	var wg sync.WaitGroup
 	blocksDone := new(uint64)
 
-	// this works because of how AllKeysChan behaves on rambs
-	blocksTotal := uint64(len(akc))
-
-	maxWorkers := opts.IpfsAPIMaxWorkers
-	errCh := make(chan error, 1+maxWorkers) // our own error plus one from each worker
-
-	// watchdog for progress and to bail early if an error appears
-	go func() {
-		var progressTick <-chan time.Time
-		if opts.ShowProgress {
-			fmt.Fprint(os.Stderr, "0% of blocks written\r")
-			t := time.NewTicker(250 * time.Millisecond)
-			progressTick = t.C
-			defer t.Stop()
-		}
-		for {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			case err := <-errCh:
-				errCh <- err // put error back where we got it from
-				if err != nil {
-					shutdownWorkers()
-				}
-				return
-			case <-progressTick:
-				curPct := 100 * atomic.LoadUint64(blocksDone) / blocksTotal
-				if curPct != lastPct {
-					lastPct = curPct
-					fmt.Fprintf(os.Stderr, "%d%% of blocks written\r", lastPct)
-				}
-			}
-		}
-	}()
-
-	var wg sync.WaitGroup
-
-	for maxWorkers > 0 {
-		maxWorkers--
+	for i := uint(0); i < maxWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			api := ipfsapi.NewShell(opts.IpfsAPI)
 			api.SetTimeout(time.Second * time.Duration(opts.IpfsAPITimeoutSecs))
 
 			for {
 				select {
 
-				case <-ctx.Done():
+				case <-innerCtx.Done():
+					// something caused us to stop, whatever it is parent knows why
 					return
 
 				case c, chanOpen := <-akc:
 
 					if !chanOpen {
+						select {
+						case finishCh <- struct{}{}:
+						default:
+							// if we can't signal feeder is done - someone else already did
+						}
 						return
 					}
 
@@ -311,7 +293,7 @@ func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Block
 								true,
 							),
 						).
-						Exec(ctx, res)
+						Exec(innerCtx, res)
 					// end of 🤮
 
 					if err != nil {
@@ -332,14 +314,46 @@ func writeoutBlocks(externalCtx context.Context, opts *opts, bs blockstore.Block
 		}()
 	}
 
-	wg.Wait()
-	shutdownWorkers()
-
-	// feeder drain if anything remains
-	for len(akc) > 0 {
-		<-akc
+	var blocksTotal, lastPct uint64
+	var progressTick <-chan time.Time
+	if opts.ShowProgress {
+		// this works because of how AllKeysChan behaves on rambs
+		blocksTotal = uint64(len(akc))
+		fmt.Fprint(os.Stderr, "0% of blocks written\r")
+		t := time.NewTicker(250 * time.Millisecond)
+		progressTick = t.C
+		defer t.Stop()
 	}
 
-	errCh <- externalCtx.Err()
+	var workerError error
+watchdog:
+	for {
+		select {
+
+		case <-finishCh:
+			break watchdog
+
+		case <-externalCtx.Done():
+			break watchdog
+
+		case workerError = <-errCh:
+			shutdownWorkers()
+			break watchdog
+
+		case <-progressTick:
+			curPct := 100 * atomic.LoadUint64(blocksDone) / blocksTotal
+			if curPct != lastPct {
+				lastPct = curPct
+				fmt.Fprintf(os.Stderr, "%d%% of blocks written\r", lastPct)
+			}
+		}
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	if workerError != nil {
+		return workerError
+	}
 	return <-errCh
 }
