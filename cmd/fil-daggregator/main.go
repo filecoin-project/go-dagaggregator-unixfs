@@ -118,7 +118,8 @@ func main() {
 		log.Fatalf("writing newly created dag to IPFS API failed: %s", err)
 	}
 
-	log.Infow("aggregation finished", "aggregateRoot", root, "totalEntries", len(entries))
+	akc, _ := ramBs.AllKeysChan(ctx)
+	log.Infow("aggregation finished", "aggregateRoot", root, "totalManifestEntries", len(entries), "newIntermediateBlocks", len(akc))
 }
 
 func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.AggregateDagEntry) error {
@@ -217,12 +218,15 @@ watchdog:
 	}
 
 	wg.Wait()
-	close(errCh)
+	close(errCh) // closing a buffered channel keeps any buffered values for <-
 
 	if workerError != nil {
 		return workerError
 	}
-	return <-errCh
+	if err := <-errCh; err != nil {
+		return err
+	}
+	return externalCtx.Err()
 }
 
 // pulls cids from an AllKeysChan and sends them concurrently via multiple workers to an API
@@ -350,10 +354,13 @@ watchdog:
 	}
 
 	wg.Wait()
-	close(errCh)
+	close(errCh) // closing a buffered channel keeps any buffered values for <-
 
 	if workerError != nil {
 		return workerError
 	}
-	return <-errCh
+	if err := <-errCh; err != nil {
+		return err
+	}
+	return externalCtx.Err()
 }

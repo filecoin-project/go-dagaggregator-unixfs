@@ -20,7 +20,7 @@ curl -sL https://dweb.link/ipfs/bafybeibg7faulfv5tjxfd5o4mk2sdpxm2d4n37enzz6nte4
 ## Output Example
 
 ```
-{"msg":"aggregation finished","aggregateRoot":"bafybeibg7faulfv5tjxfd5o4mk2sdpxm2d4n37enzz6nte46lkz46uqhk4","totalEntries":4}
+{"msg":"aggregation finished","aggregateRoot":"bafybeibg7faulfv5tjxfd5o4mk2sdpxm2d4n37enzz6nte46lkz46uqhk4","totalManifestEntries":4,"newIntermediateBlocks":6}
 ```
 
 ## License
