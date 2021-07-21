@@ -15,9 +15,9 @@ Creating a DAG-aggregate and exporting it to a .car file. Assumes [go-ipfs](http
 ```
 ipfs daemon --offline
 ipfs add file1  # output: QmNpiuBaHgQJP5KatAN2sqoW5p2eUp35nYzPXieNQmmHja
-ipfs add file2  # output: QmNpiuBaHgQJP5KatAN2sqoW5p2eUp35nYzPXieNQmmHja
-fil-daggregator QmNpiuBaHgQJP5KatAN2sqoW5p2eUp35nYzPXieNQmmHja QmNpiuBaHgQJP5KatAN2sqoW5p2eUp35nYzPXieNQmmHja  # output: bafybeicwi3cclqetgy4aldwcii4jxc7efaxau5zegcgbhumngtaufrysmm
-ipfs dag export bafybeicwi3cclqetgy4aldwcii4jxc7efaxau5zegcgbhumngtaufrysmm > daggregate.car
+ipfs add file2  # output: QmZpapjGaKSqe91hw2bynRzSdMfTbVWm42QgxDRKfgLNou
+fil-daggregator QmNpiuBaHgQJP5KatAN2sqoW5p2eUp35nYzPXieNQmmHja QmZpapjGaKSqe91hw2bynRzSdMfTbVWm42QgxDRKfgLNou  # output: bafybeicwi3cclqetgy4aldwcii4jxc7efaxau5zegcgbhumngtaufrysmm
+ipfs dag export bafybeihbwnogqzu3q4drqgvr7yenpm3tdfvqu2xqpkdylkxren5yf7c7qu > daggregate.car
 ```
 
 ## Usage Example #2
