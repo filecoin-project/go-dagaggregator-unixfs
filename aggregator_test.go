@@ -23,9 +23,6 @@ func TestAggregate(t *testing.T) {
 			UniqueBlockCumulativeSize: 42, // ignored by the gateway renderer, leaf size taken instead
 		},
 
-		// IDENTITY: should be skipped entirely
-		{RootCid: cidFromStr("bafkqaddgnfwc6nbpon4xg5dfnu")},
-
 		{
 			RootCid:                   cidFromStr("bafybeibhbx3y6tnn7q4gpsous6apnobft5jybvroiepdsmvps2lmycjjxu"),
 			UniqueBlockCount:          666, // should have no effect - first seen, first taken
