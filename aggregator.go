@@ -75,9 +75,6 @@ type nodeMap map[string]*merkledag.ProtoNode
 // to the supplied DAGService. No "temporary blocks" are produced in the process:
 // everything written to the DAGService is part of the final DAG capped by the
 // final `aggregateRoot`.
-//
-// Note: CIDs based on the IDENTITY multihash 0x00 are silently excluded from
-// aggregation, and are not reflected in the manifest.
 func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []AggregateDagEntry) (aggregateRoot cid.Cid, aggregateManifestEntries []*ManifestDagEntry, err error) {
 
 	dags := make(map[string]*ManifestDagEntry, len(toAggregate))
@@ -89,11 +86,6 @@ func Aggregate(ctx context.Context, ds ipldformat.DAGService, toAggregate []Aggr
 			cv1 = d.RootCid
 		} else {
 			cv1 = cid.NewCidV1(d.RootCid.Type(), d.RootCid.Hash())
-		}
-
-		// do not consider identity multihashes for aggregation
-		if cv1.Prefix().MhType == uint64(multicodec.Identity) {
-			continue
 		}
 
 		cv0 := cid.Undef
