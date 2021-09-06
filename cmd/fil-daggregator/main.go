@@ -118,8 +118,27 @@ func main() {
 		log.Fatalf("writing newly created dag to IPFS API failed: %s", err)
 	}
 
+	var statBlocks, statBytes, aggBlocks, aggBytes uint64
 	akc, _ := ramBs.AllKeysChan(ctx)
-	log.Infow("aggregation finished", "aggregateRoot", root, "totalManifestEntries", len(entries), "newIntermediateBlocks", len(akc))
+	for c := range akc {
+		b, _ := ramBs.Get(c)
+		aggBlocks++
+		aggBytes += uint64(len(b.RawData()))
+	}
+	if !opts.SkipDagStat {
+		for _, e := range toAgg {
+			statBlocks += e.UniqueBlockCount
+			statBytes += e.UniqueBlockCumulativeSize
+		}
+	}
+	log.Infow("aggregation finished",
+		"aggregateRoot", root,
+		"totalManifestEntries", len(entries),
+		"sumPerDagUniqueBlocks", statBlocks,
+		"sumPerDagUniqueBytes", statBytes,
+		"aggregateStructureBlocks", aggBlocks,
+		"aggregateStructureBytes", aggBytes,
+	)
 }
 
 func statSources(externalCtx context.Context, opts *opts, toAgg []dagaggregator.AggregateDagEntry) error {
