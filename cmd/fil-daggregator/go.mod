@@ -16,6 +16,6 @@ require (
 	github.com/multiformats/go-multihash v0.0.15
 	github.com/pborman/getopt/v2 v2.1.0
 	github.com/pborman/options v1.2.0
-	golang.org/x/sys v0.0.0-20210630005230-0f9fa26af87c
+	golang.org/x/sys v0.1.0
 	golang.org/x/xerrors v0.0.0-20200804184101-5ec99f83aff1
 )
